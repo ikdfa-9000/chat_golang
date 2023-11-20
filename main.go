@@ -174,16 +174,24 @@ func main() {
 			chatIdsQuery, _ := db.Query("SELECT chat_id FROM chat_members WHERE user_id = (?);", currUser.id)
 			var chatIdentificator int
 			var chatName string
+			var idCurr int
+			var idLast int
+			chat_list := make([]string, 10)
 			for chatIdsQuery.Next() {
 				chatIdsQuery.Scan(&chatIdentificator)
 				// Поиск в таблице чатов названия по айди
-				chatNamesQuery, _ := db.Query("SELECT chat_name FROM chat_list WHERE chat_id = (?) ORDER BY chat_id DESC;", chatIdentificator)
+				chatNamesQuery, _ := db.Query("SELECT chat_name FROM chat_list WHERE chat_id = (?) ORDER BY chat_id DESC;;", chatIdentificator)
 				chatNamesQuery.Next()
 				chatNamesQuery.Scan(&chatName)
+				chat_list = append(chat_list, chatName)
 				chatNamesQuery.Close()
 				// Вывод списка чатов на экран
-				fmt.Println("Имя чата:", chatName, "id чата:", chatIdentificator)
+				// fmt.Println("Имя чата:", chatName, "id чата:", chatIdentificator)
 			}
+			for i := 0; i < len(chat_list); i++ {
+				fmt.Println("Имя чата:", chatName, "id чата:", i+1)
+			}
+			idLast = idCurr
 			chatIdsQuery.Close()
 			fmt.Println("Хотите сделать новый чат с человеком? Нажмите 0!")
 			fmt.Print("Ну, куда отправимся? ")
