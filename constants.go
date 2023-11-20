@@ -2,6 +2,7 @@ package main
 
 type appStatus int
 type colorId string
+type scrollStat int
 
 const (
 	// Статус приложения...
@@ -18,6 +19,10 @@ const (
 	colorPurple         = "\033[35m"
 	colorCyan           = "\033[36m"
 	colorWhite          = "\033[37m"
+	// Статус прокрутки
+	scrollUp   scrollStat = 1
+	scrollNo   scrollStat = 0
+	scrollDown scrollStat = 2
 )
 
 type State struct {
