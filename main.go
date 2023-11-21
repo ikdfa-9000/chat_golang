@@ -34,16 +34,48 @@ func CheckPasswordHash(password, hash string) bool { // Проверка пар�
 	return err == nil
 }
 
+func readInput(scanLink *bufio.Scanner, isOnlyEnglish bool, symbolsMin int, symbolsMax int) string {
+	// goodSymbols := "AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz_-0123456789" // Допустимые символы, для паролей и ников
+	for {
+		scanLink.Scan()
+		input := scanLink.Text()
+		if len(input) >= symbolsMin && len(input) <= symbolsMax { // Если длина инпута нормальная, то:
+			// if !isOnlyEnglish { // Если символы могут быть любые, то возврат инпута
+			return input
+			// TODO: Доделать
+
+			// } else {
+			// 	notAcceptable := false
+			// 	for _, symbolInput := range input { // Проход по символам инпута
+			// 		for _, symbolGood := range goodSymbols { // Проход по допустимым символам
+			// 			if symbolInput == symbolGood {
+			// 				break
+			// 			}
+			// 			if symbolGood == '9' {
+			// 				notAcceptable = true
+			// 			}
+			// 		}
+			// 		if notAcceptable {
+			// 			fmt.Println(colorRed, "Введенное значение может иметь лишь буквы английского алфавита, тире, дефис и цифры!", colorReset)
+			// 			break
+			// 		}
+			// 	}
+			// }
+		} else {
+			fmt.Println(colorRed, "Введенное значение должно быть больше", symbolsMin, "и меньше", symbolsMax, "символов по длине!", colorWhite)
+		}
+	}
+}
+
 func main() {
 	state := initState()
-	var currUser User            // Текущий пользователь
-	var intInput int             // Инпут на число
-	var stringInput string       // Инпут на строку
-	firstIdSeen := 0             // Первый айди, который видно в списке чатов
-	maxChatOnePage := 10         // Количество видимых за 1 раз чатов
-	lastIdSeen := maxChatOnePage // Айди последнего чата в видимом списке
-	scrollStatus := scrollNo     // Режим скроллинга
-	reader := bufio.NewReader(os.Stdin)
+	var currUser User                // Текущий пользователь
+	var intInput int                 // Инпут на число
+	firstIdSeen := 0                 // Первый айди, который видно в списке чатов
+	maxChatOnePage := 10             // Количество видимых за 1 раз чатов
+	lastIdSeen := maxChatOnePage - 1 // Айди последнего чата в видимом списке
+	scrollStatus := scrollNo         // Режим скроллинга
+	scanner := bufio.NewScanner(os.Stdin)
 	// Подключение и инициализация таблицы
 	fmt.Println("Подключение к таблице...")
 	db, err := sql.Open("sqlite3", "database.db")
@@ -82,13 +114,10 @@ func main() {
 				defaultStatus := "Живу" // Чёта там
 				if intInput == 1 {
 					fmt.Print("Введите свой никнейм: ", colorGreen)
-					// Надо бы сделать функцию, которая бы анализировала
-					// введенную строку на: длину, наличие только некоторых символов
-					// чтобы не было неожиданной хуеты. Так и сделаю
-					nickname, _ = reader.ReadString('\n')
+					nickname = readInput(scanner, true, 4, 32)
 					fmt.Print(colorReset)
 					fmt.Print("Введите свой пароль: ", colorGreen)
-					password, _ = reader.ReadString('\n')
+					password = readInput(scanner, true, 10, 32)
 					fmt.Print(colorReset)
 					// Вход в аккаунт
 					checkLogin, err := db.Query("SELECT nickname FROM chat_users WHERE nickname = (?);", nickname)
@@ -119,12 +148,12 @@ func main() {
 					}
 				} else {
 					fmt.Println("Введите Ваше имя: ")
-					fmt.Scanf("%s\n", &firstname)
+					firstname = readInput(scanner, false, 0, 32)
 					fmt.Println("Введите Вашу фамилию: ")
-					fmt.Scanf("%s\n", &secondname)
+					secondname = readInput(scanner, false, 0, 32)
 					// ПРОВЕРКА НИКНЕЙМА
 					fmt.Println("Введите никнейм для аккаунта: ")
-					fmt.Scanf("%s\n", &nickname)
+					nickname = readInput(scanner, true, 4, 32)
 					// Смотрим, есть ли этот никнейм в таблице chat_users
 					checkLogin, err := db.Query("SELECT nickname FROM chat_users WHERE nickname = (?);", nickname)
 					if err != nil {
@@ -143,7 +172,7 @@ func main() {
 					}
 					checkLogin.Close()
 					fmt.Println("Введите пароль для аккаунта: ")
-					fmt.Scanf("%s\n", &password)
+					password = readInput(scanner, true, 6, 32)
 					password, _ = HashPassword(password)
 					_, err = db.Exec("INSERT INTO chat_users (firstname, secondname, nickname, password, status) VALUES(?1, ?2, ?3, ?4, ?5);", firstname, secondname, nickname, password, defaultStatus)
 					if err != nil {
@@ -155,7 +184,8 @@ func main() {
 				}
 			}
 		case appMainStatus:
-			fmt.Println("Велкам,", state.userColor, currUser.firstname, currUser.secondname, "AKA", currUser.nickname, colorReset)
+
+			fmt.Println("Велкам", currUser.firstname, currUser.secondname, "AKA", currUser.nickname)
 			fmt.Println("Выберите действие:")
 			fmt.Println(colorCyan, "1. Списки чатов", colorReset)
 			fmt.Println(colorYellow, "2. Настройки приложения", colorReset)
@@ -197,9 +227,10 @@ func main() {
 				chat_list = append(chat_list, chatTemp) // Впихиваем чат в слайс
 				chatNamesQuery.Close()                  // Закрываем Query. Хз зачем :D
 			}
-			// ДИЧАЙШАЯ ШАЙТАН МАШИНА прокрутка чатов МОНСТР КОД
-			// САМЫЙ СТРАШНЫЙ КОД на свете
-			lastIdSeen, firstIdSeen = printchats(chat_list, lastIdSeen, maxChatOnePage, scrollStatus, firstIdSeen)
+			if len(chat_list) < maxChatOnePage {
+				lastIdSeen = len(chat_list) - 1
+			}
+			firstIdSeen, lastIdSeen = printchats(chat_list, lastIdSeen, maxChatOnePage, scrollStatus, firstIdSeen)
 			scrollStatus = scrollNo
 			fmt.Println("--------------------------------------------------")
 			chatIdsQuery.Close()
@@ -211,33 +242,36 @@ func main() {
 			switch intInput {
 			case 0:
 				fmt.Print("Введите никнейм человека, с которым вы хотите создать чат: ")
-				fmt.Scanf("%s\n", &stringInput)
-				secondUserNick := stringInput
-				fmt.Println("Введите название вашего чата: ")
-				fmt.Scanf("%s\n", &stringInput)
-				newChatName := stringInput
-				_, err = db.Exec("INSERT INTO chat_list (creator_id, chat_name) VALUES(?1, ?2);", currUser.id, newChatName)
-				if err != nil {
-					log.Fatal(err)
-				}
-				// Получаем айди человека по никнейму
-				rowsId, _ := db.Query("SELECT id FROM chat_users WHERE nickname = (?) ", secondUserNick)
-				if !rowsId.Next() {
-					fmt.Println("Такой пользователь не найден!")
+				secondUserNick := readInput(scanner, true, 4, 32)
+				if secondUserNick == currUser.nickname {
+					fmt.Println(colorRed, "Нельзя сделать чат с самим собой (зачем?)", colorReset)
 				} else {
-					var secondUserId int
-					rowsId.Scan(&secondUserId)
-					rowsId.Close()
-					// Получаем айди чата, созданного текущим пользователем, сортировка по убыванию,
-					// ибо айди только что созданного чата всегда будет наибольшим
-					newChatIdQuery, _ := db.Query("SELECT chat_id FROM chat_list WHERE creator_id = (?) ORDER BY chat_id DESC;", currUser.id)
-					newChatIdQuery.Next()
-					var newChatId int
-					newChatIdQuery.Scan(&newChatId)
-					newChatIdQuery.Close()
-					_, _ = db.Exec("INSERT INTO chat_members (chat_id, user_id) VALUES(?1, ?2);", newChatId, secondUserId)
-					_, _ = db.Exec("INSERT INTO chat_members (chat_id, user_id) VALUES(?1, ?2);", newChatId, currUser.id)
-					lastIdSeen = 0
+					fmt.Println("Введите название вашего чата: ")
+					newChatName := readInput(scanner, false, 4, 64)
+					_, err = db.Exec("INSERT INTO chat_list (creator_id, chat_name) VALUES(?1, ?2);", currUser.id, newChatName)
+					if err != nil {
+						log.Fatal(err)
+					}
+					// Получаем айди человека по никнейму
+					rowsId, _ := db.Query("SELECT id FROM chat_users WHERE nickname = (?) ", secondUserNick)
+					if !rowsId.Next() {
+						fmt.Println("Такой пользователь не найден!")
+					} else {
+						var secondUserId int
+						rowsId.Scan(&secondUserId)
+						rowsId.Close()
+						// Получаем айди чата, созданного текущим пользователем, сортировка по убыванию,
+						// ибо айди только что созданного чата всегда будет наибольшим
+						newChatIdQuery, _ := db.Query("SELECT chat_id FROM chat_list WHERE creator_id = (?) ORDER BY chat_id DESC;", currUser.id)
+						newChatIdQuery.Next()
+						var newChatId int
+						newChatIdQuery.Scan(&newChatId)
+						newChatIdQuery.Close()
+						_, _ = db.Exec("INSERT INTO chat_members (chat_id, user_id) VALUES(?1, ?2);", newChatId, secondUserId)
+						_, _ = db.Exec("INSERT INTO chat_members (chat_id, user_id) VALUES(?1, ?2);", newChatId, currUser.id)
+						firstIdSeen = 0
+						lastIdSeen = maxChatOnePage
+					}
 				}
 			case -1:
 				scrollStatus = scrollDown
@@ -277,57 +311,85 @@ func authorize(database *sql.DB, nick string, userToInitiate *User, status strin
 	var fname string
 	var sname string
 	getInfo.Scan(&idToInitiate, &fname, &sname)
+	fmt.Println(idToInitiate, fname, sname, nick)
 	*userToInitiate = initUser(idToInitiate, fname, sname, nick, status)
 	getInfo.Close()
 	fmt.Println("-------------------------------------------------------------------")
 }
 
 func printchats(chatlink []ChatInList, lastid int, maxChats int, scrolling scrollStat, firstid int) (int, int) {
-	// TODO: ПОЛНОСТЬЮ ПЕРЕДЕЛАТЬ ПЕРЕПИСАТЬ но пока норм
-
-	// Поведение этой штуки определяется статусом скроллинга (вниз, вверх, нет). Должно быть
-	// легко в понимании и использовании, но сейчас 2:41 и я не совсем понимаю, что делаю
-	// Но оно работает! Пиздец... Надо переделать
-	i := lastid
-	k := firstid
-	if scrolling == scrollDown {
-		if lastid >= len(chatlink)-1 {
-			fmt.Println(colorRed, "Чатов больше нет! Прокручивать нечего", colorReset)
-			i = 0
-			lastid = 0
-		}
-		k = i
-		for i < lastid+maxChats {
-			if i == len(chatlink) {
-				break
+	if len(chatlink) == 0 {
+		fmt.Println(colorYellow, "У вас ещё нет никаких чатов", colorReset)
+	}
+	if firstid == lastid && firstid == 0 {
+		fmt.Println("Имя чата:", colorCyan, chatlink[lastid].name, colorReset, "номер чата:", lastid+1, "id чата:", chatlink[lastid].id)
+	} else {
+		switch scrolling {
+		case scrollDown:
+			if lastid == len(chatlink)-1 {
+				fmt.Println(colorRed, "Больше прокручивать нечего! Загружаем первые чаты.", colorReset)
+				firstid = 0
+				if len(chatlink)-1 <= maxChats-1 {
+					lastid = len(chatlink) - 1
+				} else {
+					lastid = maxChats - 1
+				}
+				for i := firstid; i <= lastid; i++ {
+					if i == len(chatlink) {
+						break
+					}
+					fmt.Println("Имя чата:", colorCyan, chatlink[i].name, colorReset, "номер чата:", i+1, "id чата:", chatlink[i].id)
+				}
+			} else {
+				firstid = lastid + 1
+				lastid = lastid + maxChats
+				for i := firstid; i <= lastid; i++ {
+					fmt.Println("Имя чата:", colorCyan, chatlink[i].name, colorReset, "номер чата:", i+1, "id чата:", chatlink[i].id)
+					if i == len(chatlink)-1 {
+						lastid = i
+						break
+					}
+				}
 			}
-			fmt.Println("Имя чата:", colorCyan, chatlink[i].name, colorReset, "номер чата:", i+1, "id чата:", chatlink[i].id)
-			i++
-		}
-	} else if scrolling == scrollUp {
-		if i <= maxChats {
-			fmt.Println(colorRed, "Чатов больше нет! Прокручивать нечего", colorReset)
-			i = 0
-			lastid = 0
-			k = i
-			for i < lastid+maxChats {
+		case scrollUp:
+			if firstid == 0 {
+				fmt.Println(colorRed, "Больше прокручивать нечего!", colorReset)
+				firstid = 0
+				if len(chatlink)-1 <= maxChats-1 {
+					lastid = len(chatlink) - 1
+				} else {
+					lastid = maxChats - 1
+				}
+				for i := firstid; i <= lastid; i++ {
+					if i == len(chatlink) {
+						break
+					}
+					fmt.Println("Имя чата:", colorCyan, chatlink[i].name, colorReset, "номер чата:", i+1, "id чата:", chatlink[i].id)
+				}
+			} else {
+				firstid = lastid - firstid - 1
+				if firstid < 0 {
+					firstid = 0
+				}
+				lastid = firstid + maxChats - 1
+				for i := firstid; i <= lastid; i++ {
+					fmt.Println("Имя чата:", colorCyan, chatlink[i].name, colorReset, "номер чата:", i+1, "id чата:", chatlink[i].id)
+				}
+			}
+		case scrollNo:
+			if len(chatlink)-1 <= maxChats-1 {
+				lastid = len(chatlink) - 1
+			} else {
+				lastid = maxChats - 1
+			}
+			for i := firstid; i <= lastid; i++ {
 				if i == len(chatlink) {
 					break
 				}
 				fmt.Println("Имя чата:", colorCyan, chatlink[i].name, colorReset, "номер чата:", i+1, "id чата:", chatlink[i].id)
-				i++
 			}
-			return i, k
-		}
-		for l := firstid - maxChats; l < firstid; l++ {
-			fmt.Println("Имя чата:", colorCyan, chatlink[l].name, colorReset, "номер чата:", l+1, "id чата:", chatlink[l].id)
-		}
-		k = firstid - maxChats
-		i = firstid
-	} else {
-		for m := firstid; m < i; m++ {
-			fmt.Println("Имя чата:", colorCyan, chatlink[m].name, colorReset, "номер чата:", m+1, "id чата:", chatlink[m].id)
 		}
 	}
-	return i, k
+	fmt.Println(firstid, lastid)
+	return firstid, lastid
 }
