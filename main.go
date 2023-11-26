@@ -6,23 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
+	"unicode/utf8"
 
 	_ "github.com/mattn/go-sqlite3"
+	kb "github.com/nsf/termbox-go"
 	"golang.org/x/crypto/bcrypt"
 )
-
-type User struct {
-	id         int
-	firstname  string
-	secondname string
-	nickname   string
-	status     string
-}
-
-type ChatInList struct {
-	name string
-	id   int
-}
 
 func HashPassword(password string) (string, error) { // Хэширование пароля
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
@@ -69,12 +59,16 @@ func readInput(scanLink *bufio.Scanner, isOnlyEnglish bool, symbolsMin int, symb
 
 func main() {
 	state := initState()
-	var currUser User                // Текущий пользователь
-	var intInput int                 // Инпут на число
-	firstIdSeen := 0                 // Первый айди, который видно в списке чатов
-	maxChatOnePage := 10             // Количество видимых за 1 раз чатов
-	lastIdSeen := maxChatOnePage - 1 // Айди последнего чата в видимом списке
-	scrollStatus := scrollNo         // Режим скроллинга
+	var currChatId int   // Текущий чат
+	var currUser User    // Текущий пользователь
+	var intInput int     // Инпут на число
+	maxChatOnePage := 10 // Количество видимых за 1 раз чатов
+
+	firstChatIdSeen := 0                 // Первый айди, который видно в списке чатов
+	lastChatIdSeen := maxChatOnePage - 1 // Айди последнего чата в видимом списке
+
+	scrollStatus := scrollNo // Режим скроллинга
+
 	scanner := bufio.NewScanner(os.Stdin)
 	// Подключение и инициализация таблицы
 	fmt.Println("Подключение к таблице...")
@@ -184,7 +178,6 @@ func main() {
 				}
 			}
 		case appMainStatus:
-
 			fmt.Println("Велкам", currUser.firstname, currUser.secondname, "AKA", currUser.nickname)
 			fmt.Println("Выберите действие:")
 			fmt.Println(colorCyan, "1. Списки чатов", colorReset)
@@ -220,26 +213,42 @@ func main() {
 			for chatIdsQuery.Next() {
 				chatIdsQuery.Scan(&chatIdentificator)
 				// Поиск в таблице чатов названия по айди
+				// Это надо чутка переделать (???)
+				// Каждый раз подключаемся, даем Query, хотя можно сделать всё тоже через проверку айди последнего
+				// чата. Да и выводить нужно чаты, начиная не с самого первого, а с конца. Или вообще по дате обновления.
+				// Пиздец
 				chatNamesQuery, _ := db.Query("SELECT chat_name FROM chat_list WHERE chat_id = (?) ;", chatIdentificator)
 				chatNamesQuery.Next()
 				chatNamesQuery.Scan(&chatTemp.name) // Формируем чат для слайса
 				chatTemp.id = chatIdentificator
 				chat_list = append(chat_list, chatTemp) // Впихиваем чат в слайс
-				chatNamesQuery.Close()                  // Закрываем Query. Хз зачем :D
+				chatNamesQuery.Close()                  // Закрываем Query
 			}
 			if len(chat_list) < maxChatOnePage {
-				lastIdSeen = len(chat_list) - 1
+				lastChatIdSeen = len(chat_list) - 1
 			}
-			firstIdSeen, lastIdSeen = printchats(chat_list, lastIdSeen, maxChatOnePage, scrollStatus, firstIdSeen)
+			firstChatIdSeen, lastChatIdSeen = printchats(chat_list, lastChatIdSeen, maxChatOnePage, scrollStatus, firstChatIdSeen)
 			scrollStatus = scrollNo
 			fmt.Println("--------------------------------------------------")
 			chatIdsQuery.Close()
 			fmt.Println("Хотите сделать новый чат с человеком? Нажмите 0!")
 			fmt.Println("Для загрузки следующей страницы чатов введите -1")
 			fmt.Println("Для загрузки предыдущей страницы чатов введите -2")
+			fmt.Println("Для загрузки меню введите -3")
 			fmt.Print("Ну, куда отправимся? ")
+			intInput = 0
 			fmt.Scanf("%d\n", &intInput)
+			for {
+				if intInput < -3 {
+					fmt.Println("Выберите корректное действие!")
+					fmt.Scanf("%d\n", &intInput)
+				} else {
+					break
+				}
+			}
 			switch intInput {
+			case -3:
+				state.appState = appMainStatus
 			case 0:
 				fmt.Print("Введите никнейм человека, с которым вы хотите создать чат: ")
 				secondUserNick := readInput(scanner, true, 4, 32)
@@ -269,35 +278,152 @@ func main() {
 						newChatIdQuery.Close()
 						_, _ = db.Exec("INSERT INTO chat_members (chat_id, user_id) VALUES(?1, ?2);", newChatId, secondUserId)
 						_, _ = db.Exec("INSERT INTO chat_members (chat_id, user_id) VALUES(?1, ?2);", newChatId, currUser.id)
-						firstIdSeen = 0
-						lastIdSeen = maxChatOnePage
+						firstChatIdSeen = 0
+						lastChatIdSeen = maxChatOnePage
 					}
 				}
 			case -1:
 				scrollStatus = scrollDown
 			case -2:
 				scrollStatus = scrollUp
+			default:
+				if intInput >= 1 && intInput <= len(chat_list) && len(chat_list) != 0 {
+					fmt.Println(colorGreen, "Открываем чат под номером", intInput, colorReset)
+					fmt.Println("---------------------------------------------------")
+					currChatId = chat_list[intInput-1].id
+					state.appState = appChatOpennedStatus
+				} else if len(chat_list) == 0 {
+					fmt.Println(colorYellow, "Невозможно выбрать того, чего у вас нет)", colorReset)
+				} else {
+					fmt.Println(colorRed, "Чат с указанным номером не найден на странице!", colorReset)
+				}
+			}
+		case appChatOpennedStatus:
+			messageTextToSend := ""
+			message_list := make([]Message, 0, 21)
+			recentMessageIdDB := -1
+			recentMessageIdInterface := -2
+			linesCountToClear := 2
+			kb.Init()
+			go messageWrite(&messageTextToSend, &state, db, currUser.id, currChatId)
+			for {
+				getMessageLastId, err := db.Query("SELECT message_id FROM messages_list WHERE chat_id = (?) ORDER BY message_id DESC LIMIT 1", currChatId)
+				if err != nil {
+					log.Fatal(err)
+				}
+				getMessageLastId.Next()
+				getMessageLastId.Scan(&recentMessageIdDB)
+				getMessageLastId.Close()
+				// Если айди последнего сообщения в бд не совпадает с айди последнего сообщения в
+				// программе, обновляем массив
+				if recentMessageIdDB != recentMessageIdInterface {
+					getMessagesQuery, err := db.Query("SELECT message_id, user_id, content FROM messages_list WHERE chat_id = (?1) AND message_id > (?2) ", currChatId, recentMessageIdInterface)
+					if err != nil {
+						log.Fatal(err)
+					}
+					for getMessagesQuery.Next() {
+						var messageToAdd Message
+						var tempUserId int
+						getMessagesQuery.Scan(&messageToAdd.id, &tempUserId, &messageToAdd.content)
+						getUsernameFromId, err := db.Query("SELECT nickname FROM chat_users WHERE id = (?)", tempUserId)
+						if err != nil {
+							log.Fatal(err)
+						}
+						getUsernameFromId.Next()
+						getUsernameFromId.Scan(&messageToAdd.user)
+						getUsernameFromId.Close()
+						messageToAdd.date = "PLACEHOLDER"
+						message_list = append(message_list, messageToAdd)
+					}
+					recentMessageIdInterface = recentMessageIdDB
+					getMessagesQuery.Close()
+				}
+				if len(message_list) == 0 {
+					fmt.Println(colorGreen, "Показывать нечего!")
+				} else {
+					for i := 0; i < len(message_list); i++ {
+						// Имя отправителя: сообщение, статус прочтения, дата
+						stringToPrint := state.userColor + message_list[i].user + ": " + state.messageColor + message_list[i].content + colorReset
+						if message_list[i].isRead {
+							stringToPrint = stringToPrint + " • "
+						} else {
+							stringToPrint = stringToPrint + " x "
+						}
+						stringToPrint = stringToPrint + message_list[i].date
+						fmt.Println(stringToPrint)
+					}
+					linesCountToClear = len(message_list) + 1
+				}
+				fmt.Println(colorYellow, "Напишите что-нибудь:", state.messageColor, messageTextToSend, colorReset)
+				time.Sleep(time.Millisecond * time.Duration(100))
+				clearLines(linesCountToClear)
+				if state.appState != appChatOpennedStatus {
+					currChatId = 0
+					break
+				}
 			}
 		case appSettingsStatus:
+			fmt.Println("Настройки!")
+			fmt.Println("1. Цвет сообщения:", state.messageColor, "Привет!", colorReset)
+			fmt.Println("2. Цвет даты:", state.dateColor, "20/03/2020", colorReset) // KAR EN TUK
+			fmt.Println("3. Цвет никнейма:", state.userColor, currUser.nickname, colorReset)
+			fmt.Println("-----------------------------------------------------------")
+			fmt.Println("Выберите опцию, которую вы хотите поменять")
+			fmt.Println("Чтобы выйти обратно в список чатов, напишите -1")
+			colorsArray := []string{colorRed, colorGreen, colorYellow, colorBlue, colorPurple, colorCyan, colorReset}
+			fmt.Scanf("%d\n", &intInput)
+			for {
+				if (intInput < -1 && intInput > 3) || intInput == 0 {
+					fmt.Println("Выберите -1, 1, 2, 3")
+					fmt.Scanf("%d\n", &intInput)
+				} else {
+					break
+				}
+			}
+			switch intInput {
+			case -1:
+				state.appState = appMainStatus
+			case 1:
+				fmt.Println("Выберите цвет для даты:")
+				fmt.Println("1. Красный 2. Зеленый 3. Желтый 4. Синий 5. Фиолетовый 6. Голубой 7. Стандартный")
+				fmt.Scanf("%d\n", &intInput)
+				for {
+					if intInput < 1 && intInput > 7 {
+						fmt.Println("Выберите корректный номер!")
+						fmt.Scanf("%d\n", &intInput)
+					} else {
+						break
+					}
+				}
+				state.messageColor = colorsArray[intInput-1]
+			case 2:
+				fmt.Println("Выберите цвет для даты:")
+				fmt.Println("1. Красный 2. Зеленый 3. Желтый 4. Синий 5. Фиолетовый 6. Голубой 7. Стандартный")
+				fmt.Scanf("%d\n", &intInput)
+				for {
+					if intInput < 1 && intInput > 7 {
+						fmt.Println("Выберите корректный номер!")
+						fmt.Scanf("%d\n", &intInput)
+					} else {
+						break
+					}
+				}
+				state.dateColor = colorsArray[intInput-1]
+			case 3:
+				fmt.Println("Выберите цвет для никнейма:")
+				fmt.Println("1. Красный 2. Зеленый 3. Желтый 4. Синий 5. Фиолетовый 6. Голубой 7. Стандартный")
+				fmt.Scanf("%d\n", &intInput)
+				for {
+					if intInput < 1 && intInput > 7 {
+						fmt.Println("Выберите корректный номер!")
+						fmt.Scanf("%d\n", &intInput)
+					} else {
+						break
+					}
+				}
+				state.userColor = colorsArray[intInput-1]
+			}
 		}
-	}
-}
-func initState() State { // Инициализация статуса приложения
-	return State{
-		appState:     appWelcomeStatus,
-		messageColor: colorWhite,
-		userColor:    colorWhite,
-		dateColor:    colorWhite,
-	}
-}
-
-func initUser(identific int, name string, secname string, nick string, stat string) User {
-	return User{
-		id:         identific,
-		firstname:  name,
-		secondname: secname,
-		nickname:   nick,
-		status:     stat,
 	}
 }
 
@@ -392,4 +518,64 @@ func printchats(chatlink []ChatInList, lastid int, maxChats int, scrolling scrol
 	}
 	fmt.Println(firstid, lastid)
 	return firstid, lastid
+}
+
+func initState() State { // Инициализация статуса приложения
+	return State{
+		appState:     appWelcomeStatus,
+		messageColor: colorBlue,
+		userColor:    colorYellow,
+		dateColor:    colorWhite,
+	}
+}
+
+func initUser(identific int, name string, secname string, nick string, stat string) User {
+	return User{
+		id:         identific,
+		firstname:  name,
+		secondname: secname,
+		nickname:   nick,
+		status:     stat,
+	}
+}
+
+func messageWrite(messageLink *string, state *State, database *sql.DB, currentUserId int, chatId int) {
+	for {
+		if (*state).appState != appChatOpennedStatus {
+			break
+		}
+		event := kb.PollEvent()
+		if event.Ch == 0 {
+			if event.Key == kb.KeyEsc {
+				kb.Close()
+				(*state).appState = appChatListStatus
+				*messageLink = ""
+			} else if event.Key == kb.KeySpace {
+				*messageLink = *messageLink + " "
+			} else if event.Key == kb.KeyBackspace {
+				if len(*messageLink) > 0 {
+					_, size := utf8.DecodeLastRuneInString(*messageLink)
+					*messageLink = (*messageLink)[:len(*messageLink)-size]
+				}
+			} else if event.Key == kb.KeyEnter {
+				_, err := database.Exec("INSERT INTO messages_list (chat_id, user_id, content) VALUES(?1, ?2, ?3);", chatId, currentUserId, *messageLink)
+				if err != nil {
+					kb.Close()
+					log.Fatal(err)
+				}
+				*messageLink = ""
+			} else if event.Key == kb.KeyCtrlC {
+				kb.Close()
+				log.Fatal(0)
+			}
+		} else {
+			*messageLink = *messageLink + string(event.Ch)
+		}
+	}
+}
+
+func clearLines(linesCount int) {
+	for i := 0; i < linesCount; i++ {
+		fmt.Printf("\033[1A\033[K")
+	}
 }
