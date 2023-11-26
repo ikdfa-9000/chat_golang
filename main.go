@@ -24,33 +24,29 @@ func CheckPasswordHash(password, hash string) bool { // Проверка пар�
 	return err == nil
 }
 
-func readInput(scanLink *bufio.Scanner, isOnlyEnglish bool, symbolsMin int, symbolsMax int) string {
-	// goodSymbols := "AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz_-0123456789" // Допустимые символы, для паролей и ников
+func readInput(scanLink *bufio.Scanner, onlyGoodSymbols bool, symbolsMin int, symbolsMax int) string {
+	goodSymbols := "AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz_-0123456789" // Допустимые символы, для паролей и ников
 	for {
 		scanLink.Scan()
 		input := scanLink.Text()
 		if len(input) >= symbolsMin && len(input) <= symbolsMax { // Если длина инпута нормальная, то:
-			// if !isOnlyEnglish { // Если символы могут быть любые, то возврат инпута
-			return input
-			// TODO: Доделать
-
-			// } else {
-			// 	notAcceptable := false
-			// 	for _, symbolInput := range input { // Проход по символам инпута
-			// 		for _, symbolGood := range goodSymbols { // Проход по допустимым символам
-			// 			if symbolInput == symbolGood {
-			// 				break
-			// 			}
-			// 			if symbolGood == '9' {
-			// 				notAcceptable = true
-			// 			}
-			// 		}
-			// 		if notAcceptable {
-			// 			fmt.Println(colorRed, "Введенное значение может иметь лишь буквы английского алфавита, тире, дефис и цифры!", colorReset)
-			// 			break
-			// 		}
-			// 	}
-			// }
+			if !onlyGoodSymbols { // Если символы могут быть любые, то возврат инпута
+				return input
+				// TODO: Доделать
+			} else {
+				for _, symbolInput := range input { // Проход по символам инпута
+					for _, symbolGood := range goodSymbols { // Проход по допустимым символам
+						if symbolInput == symbolGood {
+							break
+						}
+						if symbolGood == '9' {
+							fmt.Println(colorRed, "Введенное значение может иметь лишь буквы английского алфавита, тире, дефис и цифры!", colorReset)
+							os.Exit(0)
+						}
+					}
+				}
+				return input
+			}
 		} else {
 			fmt.Println(colorRed, "Введенное значение должно быть больше", symbolsMin, "и меньше", symbolsMax, "символов по длине!", colorWhite)
 		}
